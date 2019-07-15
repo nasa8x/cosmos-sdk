@@ -17,33 +17,41 @@ This document describes how to create a commmand-line interface for an SDK appli
 ## Building a CLI with Cobra
 
 There is no set way to create a CLI, but SDK modules all use the [Cobra Library](https://github.com/spf13/cobra). Building a CLI with Cobra entails defining commands, arguments, and flags. [**Commands**](#commands) represent the action users wish to take, such as `tx` for creating a transaction and `query` for querying the application. Each command can also have nested subcommands, necessary for naming the specific transaction type. Users also supply **Arguments**, such as account numbers to send coins to, and [**Flags**](#flags) to modify various aspects of the commands, such as gas prices or which node to broadcast to. 
-
-TODO: query route? 
     
 ## Commands
 
-Every application first constructs a root command by creating `rootCmd`, then adding a number of subcommands to it. Among the subcommands are `TxCmd` and `QueryCmd`, which each have their own subcommands. 
+Every application first constructs a root command by creating `rootCmd`, then adds functionality by aggregating subcommands (usually with further nested subcommands) using `AddCommand`. The bulk of an application's capabilities lies in its transaction and query commands, called `TxCmd` and `QueryCmd` respectively. 
 
-`RootCmd` should add the following commands.
+### Root Commands
 
-* **Status** command
-* **Config** from the SDK client tools.
-* **Serve** command
-* **Keys** commands
+`RootCmd` most typically must include the following commands to support basic functionality in the application.
 
-`TxCmd` should add the following commands and all commands in each module the application is dependent on, retrieved by calling `GetTxCmd()`. 
+* **Status** command from the SDK rpc client tools, which prints information about the status of the connected `Node`. 
+* **Config** command from the SDK client tools, which allows the user to edit a `config.toml` file that sets values for [flags](#flags) such as `--chain-id` and which `--node` they wish to connect to.
+* **Keys** commands from the SDK client tools, which includes a collection of subcommands for using the key functions in the SDK crypto tools, including adding a new key and saving it to disk, listing all public keys stored in the key manager, and deleting a key. 
+* [**Transaction**](#transaction-commands) commands.
+* [**Query**](#query-commands) commands.
 
-* **Sign** command from the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/67f6b021180c7ef0bcf25b6597a629aca27766b8/docs/spec/auth) module, which signs messages in a transaction.
+### Transaction Commands 
+
+Application [transactions](#./transactions.md) are objects that trigger state changes. To enable the creation of transactions in the CLI interface, `TxCmd` should add the following commands:
+
+* **Sign** command from the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/67f6b021180c7ef0bcf25b6597a629aca27766b8/docs/spec/auth) module, which signs messages in a transaction. To enable multisig, it should also add the `auth` module MultiSign command. Since every transaction requires some sort of signature in order to be valid, this command is necessary for every application. 
 * **Broadcast** command from the SDK client tools, which broadcasts transactions.
-* **Send** command from the [`bank`](https://github.com/cosmos/cosmos-sdk/tree/67f6b021180c7ef0bcf25b6597a629aca27766b8/docs/spec/bank) module, which is a transaction that allows accounts to send coins to one another.
+* **Send** command from the [`bank`](https://github.com/cosmos/cosmos-sdk/tree/67f6b021180c7ef0bcf25b6597a629aca27766b8/docs/spec/bank) module, which is a transaction that allows accounts to send coins to one another, including gas and fees for transactions. 
+* Any application-specific transaction commands defined by the application developer.
+* All commands in each module the application is dependent on, retrieved by calling `GetTxCmd()` on all the modules or using the Module Manager's `AddTxCommands()` function. 
 
-`QueryCmd` should add the following commands and all commands in each module the application is dependent on, retrieved by calling `GetQueryCmd()`. 
+### Query Commands
 
-* **SearchTx** 
-* **QueryTx** 
-* **Account** command from the `auth` module.
-* **Validator** command
-* **Block** command 
+Application queries are objects that allow users to retrieve information about the application's state. In order to enable basic queries, `QueryCmd` should add the following commands:
+
+* **QueryTx** and/or other transaction query commands from the `auth` module which allow the user to search for a transaction by inputting its hash, a list of tags, or a block height. These various queries allow users to see if transactions have been included in a block.
+* **Account** command from the `auth` module, which displays the state (e.g. account balance) of an account given an address.
+* **Validator** command from the SDK rpc client tools, which displays the validator set of a given height. 
+* **Block** command from the SDK rpc client tools, which displays the block data for a given height.
+* Any application-specific query commands defined by the application developer.
+* All commands in each module the application is dependent on, retrieved by calling `GetQueryCmd()` on all the modules or using the Module Manager's `AddQueryCommands()` function. 
 
 ### Query Example
 
@@ -54,12 +62,13 @@ appcli query staking delegations <delegatorAddress>
 
 ```
 The root command is `appcli`, which indicates which application the user is interacting with. Their `query` command is to be routed to the `staking` module, which includes `delegations` as one of the possible queries. The argument provided is `delegatorAddress`, and no flags were included which means the user's already-configured flags are used in processing this command. 
+
+When the command is executed, the first thing it will do is create a [`CLIContext`](./context.md) using the application's codec. The `delegatorAddress` provided by the user is used to create query parameters, and a route is constructed using the application's provided `queryRoute`. The query parameters and route and used to make an [ABCI call](https://tendermint.com/docs/spec/abci/abci.html#messages) (a Tendermint RPC), `ABCIQueryWithOptions`. The application inherits [ABCI Query](https://tendermint.com/docs/spec/abci/abci.html#query) capabilities from [BaseApp](./baseapp.md); BaseApp handles the query by unmarshaling the request, parsing the query path, and routing it to the appropriate queryable multistore that stores delegations data for this application. 
+
     
 ## Flags
 
-Flags are used to modify commands. Users can explicitly include them in commands or pre-configure them by entering a command in the format `appcli config <flag> <value>` into their command line. Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with. All flags have default values; some toggle an option off but others are empty values that the user needs to override to create valid commands. Thus, unless the flags listed below are marked as optional, the user must provide values for them. 
-
-Flags typically have a short and long version, e.g. `--help` and `-h` both output information about a command. 
+Flags are used to modify commands. Users can explicitly include them in commands or pre-configure them by entering a command in the format `appcli config <flag> <value>` into their command line. Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with. All flags have default values; some toggle an option off but others are empty values that the user needs to override to create valid commands. Thus, unless the flag listed below is marked as optional, the user must provide a value. 
 
 ### Transaction Flags
 
