@@ -6,25 +6,42 @@
 
 ## Synopsis
 
-This document describes how to create a commmand-line interface for an SDK application. A separate document for creating a compatible interface for a module can be found [here](./modules.md). 
+This document describes how to create a commmand-line interface for an SDK application. A separate document for creating module interfaces can be found [here](#./module-interfaces.md). 
 
-1. [Building a CLI With Cobra](#building-a-cli-with-cobra)
+1. [Application CLI](#Application-cli)
 2. [Commands](#commands)
 3. [Flags](#flags)
-4. [Application CLI](#application-cli) (maybe rename)
+4. [Initialization and Configurations](#initialization-and-configurations)
+5. [REST Routes](#rest-routes)
 
 
-## Building a CLI with Cobra
+## Application CLI
+
+One of the main entrypoints of an application is the command-line interface. This entrypoint is created as a `main.go` file which compiles to a binary, conventionally placed in the application's `app/cmd/cli` folder. 
+
+### Cobra
 
 There is no set way to create a CLI, but SDK modules all use the [Cobra Library](https://github.com/spf13/cobra). Building a CLI with Cobra entails defining commands, arguments, and flags. [**Commands**](#commands) represent the action users wish to take, such as `tx` for creating a transaction and `query` for querying the application. Each command can also have nested subcommands, necessary for naming the specific transaction type. Users also supply **Arguments**, such as account numbers to send coins to, and [**Flags**](#flags) to modify various aspects of the commands, such as gas prices or which node to broadcast to. 
     
+### Main Function
+
+The `main.go` file needs to have a `main()` function that does the following to run the command-line interface:
+
+* **Instantiate the `codec`** by calling the application's `MakeCodec()` function. The `codec` is used to code and encode data structures for the application - stores can only persist `[]byte`s so the developer must define a serialization format for their data structures or use the default, [Amino](./amino.md). 
+* **Configurations** are set by reading in configuration files (e.g. the sdk config file). 
+* **Create the root command** to which all the application commands will be added as subcommands and add any required flags to it, such as `--chain-id`. 
+* **Add subcommands** for all the possible user interactions, including [transaction commands](#transaction-commands) and [query commands](#query-commands). 
+* **Create an Executor** and execute the root command. 
+
+The rest of the document will detail what needs to be implemented for each step.
+    
 ## Commands
 
-Every application first constructs a root command by creating `rootCmd`, then adds functionality by aggregating subcommands (usually with further nested subcommands) using `AddCommand`. The bulk of an application's capabilities lies in its transaction and query commands, called `TxCmd` and `QueryCmd` respectively. 
+Every application CLI first constructs a root command, then adds functionality by aggregating subcommands (often with further nested subcommands) using `AddCommand()`. The bulk of an application's unique capabilities lies in its transaction and query commands, called `TxCmd` and `QueryCmd` respectively. 
 
-### Root Commands
+### Root Command
 
-`RootCmd` most typically must include the following commands to support basic functionality in the application.
+The root command (also called `rootCmd`) is what the user first types into the command line to indicate which application they wish to interact with. The string used to invoke the command (the "Use" field) is typically the name of the application suffixed with `-cli`, e.g. `appcli`. The root command must include the following commands to support basic functionality in the application.
 
 * **Status** command from the SDK rpc client tools, which prints information about the status of the connected `Node`. 
 * **Config** command from the SDK client tools, which allows the user to edit a `config.toml` file that sets values for [flags](#flags) such as `--chain-id` and which `--node` they wish to connect to.
@@ -34,7 +51,7 @@ Every application first constructs a root command by creating `rootCmd`, then ad
 
 ### Transaction Commands 
 
-Application [transactions](#./transactions.md) are objects that trigger state changes. To enable the creation of transactions in the CLI interface, `TxCmd` should add the following commands:
+Application [transactions](#./transactions.md) are objects that trigger state changes. To enable the creation of transactions using the CLI interface, `TxCmd` should add the following commands:
 
 * **Sign** command from the [`auth`](https://github.com/cosmos/cosmos-sdk/tree/67f6b021180c7ef0bcf25b6597a629aca27766b8/docs/spec/auth) module, which signs messages in a transaction. To enable multisig, it should also add the `auth` module MultiSign command. Since every transaction requires some sort of signature in order to be valid, this command is necessary for every application. 
 * **Broadcast** command from the SDK client tools, which broadcasts transactions.
@@ -44,7 +61,7 @@ Application [transactions](#./transactions.md) are objects that trigger state ch
 
 ### Query Commands
 
-Application queries are objects that allow users to retrieve information about the application's state. In order to enable basic queries, `QueryCmd` should add the following commands:
+Application queries are objects that allow users to retrieve information about the application's state. To enable basic queries, `QueryCmd` should add the following commands:
 
 * **QueryTx** and/or other transaction query commands from the `auth` module which allow the user to search for a transaction by inputting its hash, a list of tags, or a block height. These various queries allow users to see if transactions have been included in a block.
 * **Account** command from the `auth` module, which displays the state (e.g. account balance) of an account given an address.
@@ -61,14 +78,21 @@ Here is an example of what a user might enter into their command-line to query h
 appcli query staking delegations <delegatorAddress>
 
 ```
-The root command is `appcli`, which indicates which application the user is interacting with. Their `query` command is to be routed to the `staking` module, which includes `delegations` as one of the possible queries. The argument provided is `delegatorAddress`, and no flags were included which means the user's already-configured flags are used in processing this command. 
+
+The root command is `appcli`, which indicates the user is interacting with `app`. Their `query` command is to be routed to the `staking` module, which includes `delegations` as one of the possible queries. The argument provided is `delegatorAddress`, and no flags were included which means the user's already-configured flags are used in processing this command. 
 
 When the command is executed, the first thing it will do is create a [`CLIContext`](./context.md) using the application's codec. The `delegatorAddress` provided by the user is used to create query parameters, and a route is constructed using the application's provided `queryRoute`. The query parameters and route and used to make an [ABCI call](https://tendermint.com/docs/spec/abci/abci.html#messages) (a Tendermint RPC), `ABCIQueryWithOptions`. The application inherits [ABCI Query](https://tendermint.com/docs/spec/abci/abci.html#query) capabilities from [BaseApp](./baseapp.md); BaseApp handles the query by unmarshaling the request, parsing the query path, and routing it to the appropriate queryable multistore that stores delegations data for this application. 
 
     
 ## Flags
 
-Flags are used to modify commands. Users can explicitly include them in commands or pre-configure them by entering a command in the format `appcli config <flag> <value>` into their command line. Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with. All flags have default values; some toggle an option off but others are empty values that the user needs to override to create valid commands. Thus, unless the flag listed below is marked as optional, the user must provide a value. 
+Flags are used to modify commands. Users can explicitly include them in commands or pre-configure them by entering a command in the format `appcli config <flag> <value>` into their command line. Commonly pre-configured flags include the `--node` to connect to and `--chain-id` of the blockchain the user wishes to interact with. 
+
+A _persistent_ flag (as opposed to a _local_ flag) added to a command transcends all of its children. Additionally, all flags have default values when they are added to commands; some toggle an option off but others are empty values that the user needs to override to create valid commands. A flag can be explicitly marked as _required_ so that an error is automatically thrown if the user does not provide a value, but it is also acceptable to handle unexpected missing flags differently. 
+
+### Root Command Flags
+
+It is common to add a _persistent_ flag for `--chain-id`, the unique identifier of the blockchain the application pertains to, to the root command. Adding this flag makes sense as the chain ID should not be changing across commands in this application CLI. 
 
 ### Transaction Flags
 
@@ -127,6 +151,10 @@ Queries also have flags.
 * `--ledger` (optional) lets the user perform the action using a Ledger Nano S. 
 
 
-## Application CLI (can rename)
+## Initialization and Configurations
 
-TODO: CLI `cmd/appcli/main.go`, LCD `cmd/appd/main.go`
+TODO
+
+## REST Routes
+
+TODO: A `registerRoutes` function 
