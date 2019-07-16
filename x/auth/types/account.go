@@ -237,6 +237,10 @@ func (bva BaseVestingAccount) spendableCoins(vestingCoins sdk.Coins) sdk.Coins {
 
 		// compute min((BC + DV) - V, BC) per the specification
 		min := sdk.MinInt(baseAmt.Add(delVestingAmt).Sub(vestingAmt), baseAmt)
+		if min.LT(sdk.ZeroInt()) {
+			panic(fmt.Sprintf("BaseAmt: %v\nDelVestingAmt:%v\nvestingAmt:%v\nAddress:%v\nAccount: %v\n", baseAmt, delVestingAmt, vestingAmt, bva.GetAddress(), bva))
+		}
+
 		spendableCoin := sdk.NewCoin(coin.Denom, min)
 
 		if !spendableCoin.IsZero() {
